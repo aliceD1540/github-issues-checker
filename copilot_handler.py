@@ -114,7 +114,8 @@ class CopilotHandler:
             logger.info(f"Sending analysis prompt for issue #{issue_data['number']}")
             
             # Use send_and_wait for simpler response handling
-            response = await session.send_and_wait({"prompt": prompt}, timeout=180)
+            # Increase timeout for GitHub Actions environment (slower response)
+            response = await session.send_and_wait({"prompt": prompt}, timeout=300)
             
             await session.destroy()
             

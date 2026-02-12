@@ -41,13 +41,14 @@ jobs:
         run: |
           npm install -g @github/copilot
           copilot --version
-      
-      - name: Authenticate GitHub Copilot
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Verify Copilot CLI installation
         run: |
-          # GitHub Actions provides automatic authentication
-          echo "Copilot will use GITHUB_TOKEN for authentication"
+          which copilot
+          copilot --version
+          echo "Copilot CLI installed successfully"
       
       - name: Create working directory
         run: mkdir -p /tmp/github-issues-checker
@@ -70,6 +71,9 @@ jobs:
           
           # Copilot configuration
           COPILOT_INSTRUCTIONS_FILE: copilot-instructions.md
+          
+          # GitHub token for Copilot CLI (may be needed)
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Write GitHub App private key to file
           echo "${{ secrets.GH_APP_PRIVATE_KEY }}" > github-app-key.pem
