@@ -25,7 +25,7 @@ cat /path/to/your-app-private-key.pem
 
 | Secret名 | 説明 | 例 |
 |---------|------|-----|
-| `GITHUB_REPOS` | 監視対象リポジトリ（カンマ区切り） | `owner/repo1,owner/repo2` |
+| `TARGET_REPOS` | 監視対象リポジトリ（カンマ区切り） | `owner/repo1,owner/repo2` |
 
 ## GitHub App権限の確認
 

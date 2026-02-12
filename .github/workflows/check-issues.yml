@@ -60,7 +60,7 @@ jobs:
           GITHUB_APP_PRIVATE_KEY_PATH: ${{ github.workspace }}/github-app-key.pem
           
           # Repository configuration
-          GITHUB_REPOS: ${{ secrets.GITHUB_REPOS }}
+          GITHUB_REPOS: ${{ secrets.TARGET_REPOS }}
           
           # Working directory
           WORK_DIR: /tmp/github-issues-checker
