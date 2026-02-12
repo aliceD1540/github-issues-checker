@@ -1,0 +1,93 @@
+name: GitHub Issues Auto Checker
+
+on:
+  schedule:
+    # Run every hour at minute 0
+    - cron: '0 * * * *'
+  
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      debug:
+        description: 'Enable debug logging'
+        required: false
+        default: 'false'
+
+jobs:
+  check-issues:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60  # 1 hour timeout
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Install GitHub Copilot CLI
+        run: |
+          npm install -g @github/copilot
+          copilot --version
+      
+      - name: Authenticate GitHub Copilot
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # GitHub Actions provides automatic authentication
+          echo "Copilot will use GITHUB_TOKEN for authentication"
+      
+      - name: Create working directory
+        run: mkdir -p /tmp/github-issues-checker
+      
+      - name: Run issue checker
+        env:
+          # GitHub App Authentication (recommended)
+          GITHUB_APP_ID: ${{ secrets.GH_APP_ID }}
+          GITHUB_APP_INSTALLATION_ID: ${{ secrets.GH_APP_INSTALLATION_ID }}
+          GITHUB_APP_PRIVATE_KEY_PATH: ${{ github.workspace }}/github-app-key.pem
+          
+          # Repository configuration
+          GITHUB_REPOS: ${{ secrets.GITHUB_REPOS }}
+          
+          # Working directory
+          WORK_DIR: /tmp/github-issues-checker
+          
+          # Logging
+          LOG_LEVEL: ${{ github.event.inputs.debug == 'true' && 'DEBUG' || 'INFO' }}
+          
+          # Copilot configuration
+          COPILOT_INSTRUCTIONS_FILE: copilot-instructions.md
+        run: |
+          # Write GitHub App private key to file
+          echo "${{ secrets.GH_APP_PRIVATE_KEY }}" > github-app-key.pem
+          chmod 600 github-app-key.pem
+          
+          # Run the checker
+          python3 check_issues.py
+      
+      - name: Upload logs (if failed)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checker-logs
+          path: logs/
+          retention-days: 7
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f github-app-key.pem
+          rm -rf /tmp/github-issues-checker
