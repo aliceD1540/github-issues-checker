@@ -18,6 +18,8 @@ Github Copilot SDKを使用し、Githubリポジトリのissuesをチェック�
 3. 各issueに対してGithub Copilot SDKを使用して以下の処理を実行
 	- issueの内容を解析
 	- 対応方針についてのコメントを追加、ラベルを付与
+	- リポジトリをクローン
+	- リポジトリ固有の `.github/copilot-instructions.md` があれば読み込み
 	- 対応用ブランチを作成して対応、プルリクエストを作成
 
 ## 実装方針

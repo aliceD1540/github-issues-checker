@@ -121,7 +121,11 @@ python check_issues.py
 
 ### カスタム指示の編集
 
-`copilot-instructions.md`ファイルを編集することで、Copilotの動作をカスタマイズできます：
+Copilotの動作をカスタマイズする方法は2つあります：
+
+#### 1. グローバル指示（すべてのリポジトリに適用）
+
+`copilot-instructions.md`ファイルを編集：
 
 ```bash
 # デフォルトの指示ファイルを編集
@@ -132,30 +136,57 @@ vim copilot-instructions.md
 COPILOT_INSTRUCTIONS_FILE=custom-instructions.md
 ```
 
+#### 2. リポジトリ固有の指示（推奨）⭐
+
+対象リポジトリに `.github/copilot-instructions.md` を配置すると、そのリポジトリの処理時に自動的に読み込まれます：
+
+```bash
+# 対象リポジトリで
+mkdir -p .github
+vim .github/copilot-instructions.md
+```
+
+**優先順位**: リポジトリ固有 > グローバル
+
+**使い分けの例**:
+- グローバル: 基本的な動作方針、一般的なルール
+- リポジトリ固有: プロジェクト特有の命名規則、アーキテクチャ、テストフレームワーク
+
 指示ファイルには以下の内容を含めることができます：
 - Copilotの役割と目的
 - Issue分類の基準
 - 分析時の注意点
 - 出力形式のテンプレート
 - トーンとスタイルのガイドライン
+- プロジェクト固有のコーディング規約
 
 ### Cronで定期実行
 
 1時間ごとに実行する例：
 
 ```bash
+# セットアップスクリプトを使用（推奨）
+chmod +x setup_cron.sh
+./setup_cron.sh
+```
+
+**重要**: `setup_cron.sh` は自動的に `copilot` コマンドのPATHを検出して設定します。
+
+もしcronで実行時にエラーが発生する場合は、修正スクリプトを実行してください：
+
+```bash
+chmod +x fix_cron.sh
+./fix_cron.sh
+```
+
+手動でcrontabを設定する場合：
+
+```bash
 # crontabを編集
 crontab -e
 
-# 以下を追加（1時間ごとに実行）
-0 * * * * cd /path/to/github-issues-checker && /usr/bin/python3 check_issues.py >> /var/log/github-issues-checker.log 2>&1
-```
-
-セットアップスクリプトを使用：
-
-```bash
-chmod +x setup_cron.sh
-./setup_cron.sh
+# 以下を追加（PATH設定を含める）
+0 * * * * PATH=/path/to/node/bin:/usr/bin:/bin cd /path/to/github-issues-checker && /usr/bin/python3 check_issues.py >> logs/checker.log 2>&1
 ```
 
 ## 処理の流れ
@@ -191,6 +222,7 @@ github-issues-checker/
 ├── .env.example                # 環境変数テンプレート
 ├── .env                        # 環境変数（要作成、gitignore対象）
 ├── setup_cron.sh               # cron設定スクリプト
+├── fix_cron.sh                 # cron修正スクリプト（PATH問題の解決）
 ├── TOKEN_MANAGEMENT.md         # トークン管理ガイド（複数リポジトリ対応の詳細）
 ├── DESIGN.md                   # 設計書
 └── README.md                   # このファイル
@@ -231,9 +263,41 @@ Error: Private key file not found
 
 ```
 Error: copilot command not found
+または
+FileNotFoundError: [Errno 2] No such file or directory: 'copilot'
 ```
 
-→ GitHub Copilot CLIがインストールされていないか、PATHが通っていません。インストール後、`which copilot`でパスを確認してください。
+→ GitHub Copilot CLIがインストールされていないか、PATHが通っていません。
+
+**v1.1以降**: スクリプトは自動的にcopilot CLIのパスを検出するため、通常は追加設定不要です。以下の順序で検索されます：
+1. 現在のPATH環境変数
+2. `~/.nvm/versions/node/*/bin/copilot`（Node.js/nvm経由）
+3. `/usr/local/bin/copilot`
+4. `/usr/bin/copilot`
+
+**それでもcronで失敗する場合:**
+
+cron環境では最小限のPATH環境変数しか設定されないため、念のためcronジョブにPATHを追加することを推奨します。
+
+```bash
+# 解決方法1: fix_cron.shで自動修正（推奨）
+./fix_cron.sh
+
+# 解決方法2: setup_cron.shで再セットアップ
+./setup_cron.sh
+
+# 解決方法3: 手動でcrontabを編集
+crontab -e
+# 以下のようにPATHを追加:
+# 0 * * * * PATH=/path/to/node/bin:/usr/bin:/bin cd /path/to/script && python3 check_issues.py >> logs/checker.log 2>&1
+```
+
+**copilotコマンドのパスを確認:**
+
+```bash
+which copilot
+# 例: /home/user/.nvm/versions/node/v20.18.0/bin/copilot
+```
 
 ### GitHub認証エラー
 

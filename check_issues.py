@@ -14,7 +14,7 @@ from copilot_handler import CopilotHandler
 logger = logging.getLogger(__name__)
 
 async def process_issue(issue: Issue, github_handler: GitHubHandler, git_handler: GitHandler,
-                       copilot_handler: CopilotHandler, repo_name: str, github_token: str) -> bool:
+                       copilot_handler: CopilotHandler | None, repo_name: str, github_token: str) -> bool:
     logger.info(f"Processing issue #{issue.number}: {issue.title}")
     
     issue_data = {
@@ -27,6 +27,13 @@ async def process_issue(issue: Issue, github_handler: GitHubHandler, git_handler
     
     try:
         # Step 1: Analyze issue
+        if not copilot_handler:
+            logger.info(f"Copilot disabled - adding label only for issue #{issue.number}")
+            github_handler.add_label(issue, Config.BOT_PROCESSED_LABEL)
+            github_handler.add_comment(issue, 
+                "👀 このissueは検出されましたが、自動分析・実装機能は現在無効です。手動で対応してください。")
+            return False
+        
         logger.info(f"Analyzing issue #{issue.number} with Copilot...")
         analysis_result = await copilot_handler.analyze_issue(issue_data)
         
@@ -196,7 +203,7 @@ Closes #{issue.number}
         return False
 
 async def process_repository(repo_name: str, github_handler: GitHubHandler, git_handler: GitHandler,
-                            copilot_handler: CopilotHandler, github_token: str):
+                            copilot_handler: CopilotHandler | None, github_token: str):
     logger.info(f"=== Processing repository: {repo_name} ===")
     
     issues = github_handler.get_unprocessed_issues(repo_name, Config.BOT_PROCESSED_LABEL)
@@ -260,10 +267,17 @@ async def main():
     
     # Initialize handlers
     git_handler = GitHandler(Config.WORK_DIR, github_token)
-    copilot_handler = CopilotHandler(Config.COPILOT_INSTRUCTIONS_FILE)
+    
+    # Skip Copilot SDK initialization if disabled (e.g., when running in cron)
+    copilot_handler = None
+    if not Config.DISABLE_COPILOT:
+        copilot_handler = CopilotHandler(Config.COPILOT_INSTRUCTIONS_FILE)
     
     try:
-        await copilot_handler.start()
+        if copilot_handler:
+            await copilot_handler.start()
+        else:
+            logger.info("Copilot SDK disabled - running in analysis-only mode")
         
         repos = [repo.strip() for repo in Config.GITHUB_REPOS if repo.strip()]
         
@@ -274,7 +288,8 @@ async def main():
                 logger.error(f"Error processing repository {repo_name}: {e}", exc_info=True)
     
     finally:
-        await copilot_handler.stop()
+        if copilot_handler:
+            await copilot_handler.stop()
     
     logger.info("GitHub Issues Checker completed")
     return 0

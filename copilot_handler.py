@@ -11,6 +11,36 @@ class CopilotHandler:
         self.client = None
         self.instructions_file = instructions_file or "copilot-instructions.md"
         self.custom_instructions = self._load_instructions()
+        self.copilot_cli_path = self._find_copilot_cli_path()
+    
+    def _find_copilot_cli_path(self) -> Optional[str]:
+        """Find the full path to copilot CLI command"""
+        import shutil
+        
+        # Try to find copilot in PATH
+        copilot_path = shutil.which('copilot')
+        if copilot_path:
+            logger.info(f"Found copilot CLI at: {copilot_path}")
+            return copilot_path
+        
+        # Common installation paths to check
+        common_paths = [
+            os.path.expanduser("~/.nvm/versions/node/*/bin/copilot"),
+            "/usr/local/bin/copilot",
+            "/usr/bin/copilot",
+        ]
+        
+        import glob
+        for pattern in common_paths:
+            matches = glob.glob(pattern)
+            if matches:
+                # Sort to get the latest version if multiple exist
+                matches.sort(reverse=True)
+                logger.info(f"Found copilot CLI at: {matches[0]}")
+                return matches[0]
+        
+        logger.warning("Could not find copilot CLI path. Using default 'copilot' command.")
+        return None
     
     def _load_instructions(self) -> Optional[str]:
         if not os.path.exists(self.instructions_file):
@@ -26,8 +56,30 @@ class CopilotHandler:
             logger.error(f"Failed to load instructions file: {e}")
             return None
     
+    def _load_repo_instructions(self, repo_path: str) -> Optional[str]:
+        """Load repository-specific instructions from .github/copilot-instructions.md"""
+        repo_instructions_path = os.path.join(repo_path, ".github", "copilot-instructions.md")
+        
+        if not os.path.exists(repo_instructions_path):
+            logger.debug(f"No repository-specific instructions found at {repo_instructions_path}")
+            return None
+        
+        try:
+            with open(repo_instructions_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            logger.info(f"Loaded repository-specific instructions from {repo_instructions_path}")
+            return content
+        except Exception as e:
+            logger.error(f"Failed to load repository instructions: {e}")
+            return None
+    
     async def start(self):
-        self.client = CopilotClient()
+        # Configure CopilotClient with explicit CLI path if found
+        client_options = {}
+        if self.copilot_cli_path:
+            client_options["cli_path"] = self.copilot_cli_path
+        
+        self.client = CopilotClient(client_options if client_options else None)
         await self.client.start()
         logger.info("Copilot client started")
     
@@ -184,10 +236,16 @@ INSUFFICIENT_INFO
             "cwd": repo_path  # Set working directory to cloned repo
         }
         
-        if self.custom_instructions:
+        # Check for repository-specific instructions (.github/copilot-instructions.md)
+        repo_instructions = self._load_repo_instructions(repo_path)
+        instructions_to_use = repo_instructions or self.custom_instructions
+        
+        if instructions_to_use:
             session_config["system_message"] = {
-                "content": self.custom_instructions
+                "content": instructions_to_use
             }
+            if repo_instructions:
+                logger.info(f"Using repository-specific instructions from {repo_path}/.github/copilot-instructions.md")
         
         result = {
             "success": False,
