@@ -18,9 +18,6 @@ class Config:
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
     COPILOT_INSTRUCTIONS_FILE = os.getenv("COPILOT_INSTRUCTIONS_FILE", "copilot-instructions.md")
     
-    # Disable Copilot SDK when running in cron (TTY issues)
-    DISABLE_COPILOT = os.getenv("DISABLE_COPILOT", "false").lower() in ("true", "1", "yes")
-    
     # Working directory for cloning repositories
     WORK_DIR = os.getenv("WORK_DIR", "/tmp/github-issues-checker")
     

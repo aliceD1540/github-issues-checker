@@ -137,7 +137,7 @@ class CopilotHandler:
             self._parse_analysis(result)
             
         except asyncio.TimeoutError:
-            logger.error("Analysis timed out after 180 seconds")
+            logger.error("Analysis timed out after 300 seconds")
             result["analysis"] = "分析がタイムアウトしました。issueが複雑すぎる可能性があります。"
             result["completed"] = False
         except Exception as e:
