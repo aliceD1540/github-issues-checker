@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from copilot import CopilotClient
 
 logger = logging.getLogger(__name__)
