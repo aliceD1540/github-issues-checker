@@ -68,14 +68,25 @@ class GitHubHandler:
             logger.error(f"Failed to add comment to issue #{issue.number}: {e}")
             return False
     
+    def get_repository_labels(self, repo_name: str) -> List[str]:
+        """Get list of all labels in the repository"""
+        try:
+            repo = self.client.get_repo(repo_name)
+            labels = [label.name for label in repo.get_labels()]
+            logger.info(f"Found {len(labels)} labels in {repo_name}")
+            return labels
+        except GithubException as e:
+            logger.error(f"Failed to get labels from {repo_name}: {e}")
+            return []
+    
     def add_label(self, issue: Issue, label: str) -> bool:
         try:
             repo = issue.repository
             try:
                 repo.get_label(label)
             except GithubException:
-                repo.create_label(label, "0366d6", f"Label created by bot")
-                logger.info(f"Created new label: {label}")
+                logger.warning(f"Label '{label}' does not exist in repository - skipping")
+                return False
             
             issue.add_to_labels(label)
             logger.info(f"Added label '{label}' to issue #{issue.number}")

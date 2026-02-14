@@ -88,7 +88,7 @@ class CopilotHandler:
             await self.client.stop()
             logger.info("Copilot client stopped")
     
-    async def analyze_issue(self, issue_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def analyze_issue(self, issue_data: Dict[str, Any], available_labels: List[str] = None) -> Dict[str, Any]:
         if not self.client:
             raise RuntimeError("Copilot client not started")
         
@@ -110,7 +110,7 @@ class CopilotHandler:
         try:
             session = await self.client.create_session(session_config)
             
-            prompt = self._build_analysis_prompt(issue_data)
+            prompt = self._build_analysis_prompt(issue_data, available_labels)
             logger.info(f"Sending analysis prompt for issue #{issue_data['number']}")
             
             # Use send_and_wait for simpler response handling
@@ -147,7 +147,15 @@ class CopilotHandler:
         
         return result
     
-    def _build_analysis_prompt(self, issue_data: Dict[str, Any]) -> str:
+    def _build_analysis_prompt(self, issue_data: Dict[str, Any], available_labels: List[str] = None) -> str:
+        labels_section = ""
+        if available_labels:
+            labels_section = f"""
+# 利用可能なラベル
+このリポジトリで使用可能なラベルは以下の通りです。**必ずこのリストから選択してください**：
+{', '.join(available_labels)}
+"""
+        
         return f"""以下のGitHub issueを分析し、対応方針を提案してください。
 
 # Issue情報
@@ -157,7 +165,7 @@ class CopilotHandler:
 
 # リポジトリ情報
 - リポジトリ: {issue_data['repo']}
-
+{labels_section}
 # 依頼内容
 1. **まず、issueの情報が十分かを確認してください**
    - タイトルや本文が不明確で、具体的な情報が不足している場合は「情報不足」と判定
@@ -168,7 +176,8 @@ class CopilotHandler:
 
 3. 情報が十分な場合のみ、以下を実施してください:
    - issueの内容を分析し、問題の性質を特定
-   - 適切なラベルを3つまで提案（例: bug, enhancement, documentation, good first issueなど）
+   - **上記の利用可能なラベルリストから**適切なラベルを3つまで提案
+   - **リストにないラベルは絶対に提案しないでください**
    - 対応方針を具体的に提案
 
 # 出力形式

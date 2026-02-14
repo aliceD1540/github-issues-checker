@@ -26,9 +26,14 @@ async def process_issue(issue: Issue, github_handler: GitHubHandler, git_handler
     }
     
     try:
+        # Step 0: Get available labels from repository
+        logger.info(f"Fetching available labels from {repo_name}...")
+        available_labels = github_handler.get_repository_labels(repo_name)
+        logger.info(f"Found {len(available_labels)} labels: {', '.join(available_labels)}")
+        
         # Step 1: Analyze issue
         logger.info(f"Analyzing issue #{issue.number} with Copilot...")
-        analysis_result = await copilot_handler.analyze_issue(issue_data)
+        analysis_result = await copilot_handler.analyze_issue(issue_data, available_labels)
         
         # Check for insufficient information
         if analysis_result.get("insufficient_info", False):
@@ -87,7 +92,9 @@ async def process_issue(issue: Issue, github_handler: GitHubHandler, git_handler
         # Step 3: Add labels
         logger.info(f"Adding labels to issue #{issue.number}...")
         for label in suggested_labels:
-            github_handler.add_label(issue, label)
+            success = github_handler.add_label(issue, label)
+            if not success:
+                logger.warning(f"Skipped label '{label}' (not found in repository)")
         
         # Step 4: Clone repository
         logger.info(f"Cloning repository {repo_name}...")
