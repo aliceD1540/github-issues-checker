@@ -160,34 +160,112 @@ vim .github/copilot-instructions.md
 - トーンとスタイルのガイドライン
 - プロジェクト固有のコーディング規約
 
-### Cronで定期実行
+### systemdサービスとして定期実行
 
-1時間ごとに実行する例：
+systemdを使用して、確実な定期実行とログ管理を行います。
 
-```bash
-# セットアップスクリプトを使用（推奨）
-chmod +x setup_cron.sh
-./setup_cron.sh
+**1. systemdサービスファイルを作成**
+
+`/etc/systemd/system/github-issues-checker.service`を作成：
+
+```ini
+[Unit]
+Description=GitHub Issues Checker Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=your-username
+WorkingDirectory=/path/to/github-issues-checker
+Environment="PATH=/home/your-username/.nvm/versions/node/v20.18.0/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/usr/bin/python3 /path/to/github-issues-checker/check_issues.py
+StandardOutput=append:/path/to/github-issues-checker/logs/checker.log
+StandardError=append:/path/to/github-issues-checker/logs/checker.log
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-**重要**: `setup_cron.sh` は自動的に `copilot` コマンドのPATHを検出して設定します。
+**設定のポイント:**
+- `User`: 実行するユーザー名に置き換えてください
+- `WorkingDirectory`: このリポジトリの絶対パスに置き換えてください
+- `Environment="PATH=..."`: `which copilot`コマンドで確認したcopilotのパスを含めてください
+- `ExecStart`: check_issues.pyの絶対パスを指定してください
 
-もしcronで実行時にエラーが発生する場合は、修正スクリプトを実行してください：
+**2. systemdタイマーファイルを作成**
 
-```bash
-chmod +x fix_cron.sh
-./fix_cron.sh
+`/etc/systemd/system/github-issues-checker.timer`を作成（1時間ごとに実行）：
+
+```ini
+[Unit]
+Description=GitHub Issues Checker Timer
+Requires=github-issues-checker.service
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+Unit=github-issues-checker.service
+
+[Install]
+WantedBy=timers.target
 ```
 
-手動でcrontabを設定する場合：
+**タイマー設定の説明:**
+- `OnBootSec=5min`: システム起動から5分後に初回実行
+- `OnUnitActiveSec=1h`: 前回の実行完了から1時間後に次回実行
+
+**3. サービスを有効化して開始**
 
 ```bash
-# crontabを編集
-crontab -e
+# ログディレクトリを作成
+mkdir -p /path/to/github-issues-checker/logs
 
-# 以下を追加（PATH設定を含める）
-0 * * * * PATH=/path/to/node/bin:/usr/bin:/bin cd /path/to/github-issues-checker && /usr/bin/python3 check_issues.py >> logs/checker.log 2>&1
+# systemdをリロード
+sudo systemctl daemon-reload
+
+# タイマーを有効化して開始
+sudo systemctl enable github-issues-checker.timer
+sudo systemctl start github-issues-checker.timer
+
+# タイマーの状態を確認
+sudo systemctl status github-issues-checker.timer
+sudo systemctl list-timers --all | grep github-issues-checker
 ```
+
+**4. ログの確認**
+
+```bash
+# サービスのログを確認（journald経由）
+sudo journalctl -u github-issues-checker.service -f
+
+# または、ファイルログを確認
+tail -f /path/to/github-issues-checker/logs/checker.log
+```
+
+**5. サービスの管理コマンド**
+
+```bash
+# 手動で即座に実行
+sudo systemctl start github-issues-checker.service
+
+# タイマーを停止
+sudo systemctl stop github-issues-checker.timer
+
+# タイマーを無効化
+sudo systemctl disable github-issues-checker.timer
+
+# 設定変更後のリロード
+sudo systemctl daemon-reload
+sudo systemctl restart github-issues-checker.timer
+```
+
+**systemdのメリット:**
+- システム起動時に自動で有効化
+- 確実なログ管理（journalctlで管理）
+- サービスの状態管理が簡単
+- 失敗時の自動リトライ設定が可能
+- PATH環境変数を確実に設定可能
 
 ## 処理の流れ
 
@@ -221,8 +299,6 @@ github-issues-checker/
 ├── requirements.txt             # Python依存パッケージ
 ├── .env.example                # 環境変数テンプレート
 ├── .env                        # 環境変数（要作成、gitignore対象）
-├── setup_cron.sh               # cron設定スクリプト
-├── fix_cron.sh                 # cron修正スクリプト（PATH問題の解決）
 ├── TOKEN_MANAGEMENT.md         # トークン管理ガイド（複数リポジトリ対応の詳細）
 ├── DESIGN.md                   # 設計書
 └── README.md                   # このファイル
@@ -230,10 +306,14 @@ github-issues-checker/
 
 ## ログ
 
-実行ログは標準出力に出力されます。cronで実行する場合は、リダイレクトでファイルに保存することをお勧めします。
+実行ログはsystemdサービスの`StandardOutput`と`StandardError`で指定したファイルに保存されます。
 
 ```bash
-python check_issues.py >> logs/checker.log 2>&1
+# ファイルログを確認
+tail -f /path/to/github-issues-checker/logs/checker.log
+
+# または、systemdのjournalで確認
+sudo journalctl -u github-issues-checker.service -f
 ```
 
 ## トラブルシューティング
@@ -267,36 +347,34 @@ Error: copilot command not found
 FileNotFoundError: [Errno 2] No such file or directory: 'copilot'
 ```
 
-→ GitHub Copilot CLIがインストールされていないか、PATHが通っていません。
+→ GitHub Copilot CLIがインストールされていないか、systemdサービスファイルのPATHが正しく設定されていません。
 
-**v1.1以降**: スクリプトは自動的にcopilot CLIのパスを検出するため、通常は追加設定不要です。以下の順序で検索されます：
-1. 現在のPATH環境変数
-2. `~/.nvm/versions/node/*/bin/copilot`（Node.js/nvm経由）
-3. `/usr/local/bin/copilot`
-4. `/usr/bin/copilot`
+**解決方法:**
 
-**それでもcronで失敗する場合:**
-
-cron環境では最小限のPATH環境変数しか設定されないため、念のためcronジョブにPATHを追加することを推奨します。
-
-```bash
-# 解決方法1: fix_cron.shで自動修正（推奨）
-./fix_cron.sh
-
-# 解決方法2: setup_cron.shで再セットアップ
-./setup_cron.sh
-
-# 解決方法3: 手動でcrontabを編集
-crontab -e
-# 以下のようにPATHを追加:
-# 0 * * * * PATH=/path/to/node/bin:/usr/bin:/bin cd /path/to/script && python3 check_issues.py >> logs/checker.log 2>&1
-```
-
-**copilotコマンドのパスを確認:**
+1. copilotコマンドのパスを確認：
 
 ```bash
 which copilot
 # 例: /home/user/.nvm/versions/node/v20.18.0/bin/copilot
+```
+
+2. systemdサービスファイルの`Environment`行を更新：
+
+```bash
+sudo nano /etc/systemd/system/github-issues-checker.service
+```
+
+3. `Environment`行にcopilotのパスを含めます：
+
+```ini
+Environment="PATH=/home/user/.nvm/versions/node/v20.18.0/bin:/usr/local/bin:/usr/bin:/bin"
+```
+
+4. systemdをリロードして再起動：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart github-issues-checker.timer
 ```
 
 ### GitHub認証エラー
