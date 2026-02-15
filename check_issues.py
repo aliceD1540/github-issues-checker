@@ -30,11 +30,19 @@ async def process_issue(issue: Issue, github_handler: GitHubHandler, git_handler
         logger.info(f"Checking for existing analysis comment on issue #{issue.number}...")
         existing_analysis = github_handler.get_existing_analysis(issue)
         
-        if existing_analysis:
-            logger.info(f"Found existing analysis comment for issue #{issue.number}, reusing it")
+        if existing_analysis and not existing_analysis.get("has_new_user_comments", False):
+            logger.info(f"Found existing analysis comment for issue #{issue.number} with no new user comments, reusing it")
             analysis_text = existing_analysis["analysis"]
             suggested_labels = existing_analysis["suggested_labels"]
         else:
+            # If there are new user comments, include them in the re-analysis
+            if existing_analysis and existing_analysis.get("has_new_user_comments", False):
+                logger.info(f"Found new user comments after analysis, performing re-analysis for issue #{issue.number}")
+                new_comments_text = "\n\n## 追加されたユーザーコメント:\n"
+                for comment in existing_analysis.get("new_user_comments", []):
+                    new_comments_text += f"\n### {comment['author']} ({comment['created_at']}):\n{comment['body']}\n"
+                issue_data["body"] = issue_data["body"] + new_comments_text
+            
             # Step 0b: Get available labels from repository
             logger.info(f"Fetching available labels from {repo_name}...")
             available_labels = github_handler.get_repository_labels(repo_name)
