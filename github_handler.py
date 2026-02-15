@@ -59,6 +59,66 @@ class GitHubHandler:
             logger.error(f"Failed to get issues from {repo_name}: {e}")
             return []
     
+    def get_existing_analysis(self, issue: Issue) -> Optional[dict]:
+        """
+        Check if the bot has already posted an analysis comment
+        Returns dict with 'analysis' and 'suggested_labels' if found, None otherwise
+        """
+        try:
+            comments = issue.get_comments()
+            
+            for comment in comments:
+                # Check if this is a bot analysis comment
+                if "## 🤖 自動分析結果" in comment.body:
+                    logger.info(f"Found existing analysis comment in issue #{issue.number}")
+                    
+                    # Extract analysis text (between header and footer)
+                    body = comment.body
+                    
+                    # Remove header
+                    if "## 🤖 自動分析結果" in body:
+                        body = body.split("## 🤖 自動分析結果", 1)[1]
+                    
+                    # Remove footer
+                    if "---" in body:
+                        body = body.split("---")[0]
+                    
+                    analysis_text = body.strip()
+                    
+                    # Parse labels from analysis
+                    suggested_labels = []
+                    lines = analysis_text.split('\n')
+                    in_labels_section = False
+                    
+                    for line in lines:
+                        if "## 提案ラベル" in line or "##提案ラベル" in line:
+                            in_labels_section = True
+                            continue
+                        elif line.startswith("##"):
+                            in_labels_section = False
+                        
+                        if in_labels_section and line.strip().startswith("-"):
+                            label = line.strip()[1:].strip()
+                            if label:
+                                label = label.replace('**', '')
+                                if '（' in label:
+                                    label = label.split('（')[0].strip()
+                                elif '(' in label:
+                                    label = label.split('(')[0].strip()
+                                if label:
+                                    suggested_labels.append(label)
+                    
+                    return {
+                        "analysis": analysis_text,
+                        "suggested_labels": suggested_labels
+                    }
+            
+            return None
+            
+        except GithubException as e:
+            logger.error(f"Failed to get comments from issue #{issue.number}: {e}")
+            return None
+    
     def add_comment(self, issue: Issue, comment: str) -> bool:
         try:
             issue.create_comment(comment)
@@ -85,8 +145,17 @@ class GitHubHandler:
             try:
                 repo.get_label(label)
             except GithubException:
-                logger.warning(f"Label '{label}' does not exist in repository - skipping")
-                return False
+                if label == "bot-processed":
+                    logger.info(f"Label 'bot-processed' does not exist - creating it")
+                    try:
+                        repo.create_label("bot-processed", "d4c5f9", "Issues processed by bot")
+                        logger.info(f"Created label 'bot-processed'")
+                    except GithubException as create_error:
+                        logger.error(f"Failed to create label 'bot-processed': {create_error}")
+                        return False
+                else:
+                    logger.warning(f"Label '{label}' does not exist in repository - skipping")
+                    return False
             
             issue.add_to_labels(label)
             logger.info(f"Added label '{label}' to issue #{issue.number}")

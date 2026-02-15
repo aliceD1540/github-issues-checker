@@ -26,23 +26,32 @@ async def process_issue(issue: Issue, github_handler: GitHubHandler, git_handler
     }
     
     try:
-        # Step 0: Get available labels from repository
-        logger.info(f"Fetching available labels from {repo_name}...")
-        available_labels = github_handler.get_repository_labels(repo_name)
-        logger.info(f"Found {len(available_labels)} labels: {', '.join(available_labels)}")
+        # Step 0: Check for existing analysis comment
+        logger.info(f"Checking for existing analysis comment on issue #{issue.number}...")
+        existing_analysis = github_handler.get_existing_analysis(issue)
         
-        # Step 1: Analyze issue
-        logger.info(f"Analyzing issue #{issue.number} with Copilot...")
-        analysis_result = await copilot_handler.analyze_issue(issue_data, available_labels)
-        
-        # Check for insufficient information
-        if analysis_result.get("insufficient_info", False):
-            logger.warning(f"Issue #{issue.number} has insufficient information - stopping processing")
+        if existing_analysis:
+            logger.info(f"Found existing analysis comment for issue #{issue.number}, reusing it")
+            analysis_text = existing_analysis["analysis"]
+            suggested_labels = existing_analysis["suggested_labels"]
+        else:
+            # Step 0b: Get available labels from repository
+            logger.info(f"Fetching available labels from {repo_name}...")
+            available_labels = github_handler.get_repository_labels(repo_name)
+            logger.info(f"Found {len(available_labels)} labels: {', '.join(available_labels)}")
             
-            # Clean up the analysis text by removing the INSUFFICIENT_INFO marker
-            analysis_text = analysis_result["analysis"].replace("INSUFFICIENT_INFO", "").strip()
+            # Step 1: Analyze issue
+            logger.info(f"Analyzing issue #{issue.number} with Copilot...")
+            analysis_result = await copilot_handler.analyze_issue(issue_data, available_labels)
             
-            comment_body = f"""## ⚠️ 情報不足により処理を中断しました
+            # Check for insufficient information
+            if analysis_result.get("insufficient_info", False):
+                logger.warning(f"Issue #{issue.number} has insufficient information - stopping processing")
+                
+                # Clean up the analysis text by removing the INSUFFICIENT_INFO marker
+                analysis_text = analysis_result["analysis"].replace("INSUFFICIENT_INFO", "").strip()
+                
+                comment_body = f"""## ⚠️ 情報不足により処理を中断しました
 
 {analysis_text}
 
@@ -51,43 +60,43 @@ async def process_issue(issue: Issue, github_handler: GitHubHandler, git_handler
 
 *この分析は GitHub Copilot SDK により自動生成されました*
 """
+                
+                logger.info(f"Adding insufficient info comment to issue #{issue.number}...")
+                if not github_handler.add_comment(issue, comment_body):
+                    logger.error(f"Failed to add comment to issue #{issue.number}")
+                
+                # Add "needs-more-info" label
+                github_handler.add_label(issue, "needs-more-info")
+                
+                # Mark as processed to avoid re-processing the same incomplete issue
+                github_handler.add_label(issue, Config.BOT_PROCESSED_LABEL)
+                
+                return False
             
-            logger.info(f"Adding insufficient info comment to issue #{issue.number}...")
-            if not github_handler.add_comment(issue, comment_body):
-                logger.error(f"Failed to add comment to issue #{issue.number}")
+            if not analysis_result["completed"]:
+                logger.error(f"Failed to analyze issue #{issue.number}")
+                return False
             
-            # Add "needs-more-info" label
-            github_handler.add_label(issue, "needs-more-info")
+            analysis_text = analysis_result["analysis"]
+            suggested_labels = analysis_result["suggested_labels"]
             
-            # Mark as processed to avoid re-processing the same incomplete issue
-            github_handler.add_label(issue, Config.BOT_PROCESSED_LABEL)
+            logger.info(f"Analysis text length: {len(analysis_text)}")
+            logger.info(f"Analysis text preview: {analysis_text[:200]}...")
+            logger.info(f"Suggested labels: {suggested_labels}")
             
-            return False
-        
-        if not analysis_result["completed"]:
-            logger.error(f"Failed to analyze issue #{issue.number}")
-            return False
-        
-        analysis_text = analysis_result["analysis"]
-        suggested_labels = analysis_result["suggested_labels"]
-        
-        logger.info(f"Analysis text length: {len(analysis_text)}")
-        logger.info(f"Analysis text preview: {analysis_text[:200]}...")
-        logger.info(f"Suggested labels: {suggested_labels}")
-        
-        # Step 2: Add comment with analysis
-        comment_body = f"""## 🤖 自動分析結果
+            # Step 2: Add comment with analysis
+            comment_body = f"""## 🤖 自動分析結果
 
 {analysis_text}
 
 ---
 *この分析は GitHub Copilot SDK により自動生成されました*
 """
-        
-        logger.info(f"Adding analysis comment to issue #{issue.number}...")
-        if not github_handler.add_comment(issue, comment_body):
-            logger.error(f"Failed to add comment to issue #{issue.number}")
-            return False
+            
+            logger.info(f"Adding analysis comment to issue #{issue.number}...")
+            if not github_handler.add_comment(issue, comment_body):
+                logger.error(f"Failed to add comment to issue #{issue.number}")
+                return False
         
         # Step 3: Add labels
         logger.info(f"Adding labels to issue #{issue.number}...")
@@ -137,11 +146,32 @@ Closes #{issue.number}
 """
             
             logger.info(f"Committing changes for issue #{issue.number}...")
-            if not git_handler.commit_changes(repo_path, commit_message):
-                logger.warning(f"No changes to commit for issue #{issue.number}")
-                github_handler.add_comment(issue, 
-                    "⚠️ Copilotによる分析は完了しましたが、コードの変更は必要ありませんでした。")
-                return False
+            commit_success = git_handler.commit_changes(repo_path, commit_message)
+            
+            if not commit_success:
+                logger.warning(f"No changes detected after first implementation attempt for issue #{issue.number}")
+                logger.info("Retrying with more explicit instructions...")
+                
+                # Retry with more explicit prompt
+                retry_result = await copilot_handler.implement_fix_with_retry(issue_data, str(repo_path), 
+                    "前回の試行ではファイルが変更されませんでした。このissueには実装が必要です。必ずファイルを編集してください。")
+                
+                if not retry_result["success"]:
+                    logger.error(f"Failed to implement fix on retry for issue #{issue.number}")
+                    github_handler.add_comment(issue, 
+                        "⚠️ Copilotによる分析は完了しましたが、コードの変更は必要ありませんでした。")
+                    github_handler.add_label(issue, Config.BOT_PROCESSED_LABEL)
+                    return False
+                
+                # Try committing again
+                if not git_handler.commit_changes(repo_path, commit_message):
+                    logger.warning(f"Still no changes after retry for issue #{issue.number}")
+                    github_handler.add_comment(issue, 
+                        "⚠️ Copilotによる分析は完了しましたが、コードの変更は必要ありませんでした。")
+                    github_handler.add_label(issue, Config.BOT_PROCESSED_LABEL)
+                    return False
+                
+                logger.info(f"Implementation succeeded on retry for issue #{issue.number}")
             
             # Step 8: Push changes
             logger.info(f"Pushing branch {branch_name}...")

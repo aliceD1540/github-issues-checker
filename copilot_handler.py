@@ -263,6 +263,9 @@ INSUFFICIENT_INFO
             "files_modified": []
         }
         
+        # Check if issue body indicates that implementation is needed
+        implementation_needed = self._check_if_implementation_needed(issue_data)
+        
         prompt = f"""あなたはGitHub issueの修正を担当する開発者です。以下のissueに対応するコードを実装してください。
 
 # Issue情報
@@ -278,17 +281,20 @@ INSUFFICIENT_INFO
 # 指示
 1. まずリポジトリの構造を把握してください（ls -la, tree, view など使用）
 2. 関連するファイルを特定してください
-3. 必要な変更を実装してください
+3. {"**必ず具体的なコード変更を実装してください（ファイルの編集・作成が必須です）**" if implementation_needed else "必要な変更を実装してください"}
 4. テストが必要な場合は、テストも更新してください
 5. すべての変更が完了したら、変更内容を要約してください
 
 # 重要な注意事項
+{"- **このissueには実装が必要です。必ずファイルを編集・作成してください**" if implementation_needed else ""}
+{"- **ただし、情報が不足している場合（エラー内容、再現手順、環境情報などが不明な場合）は編集を行わないでください**" if implementation_needed else ""}
 - 既存のコードスタイルに従ってください
 - 破壊的な変更は避けてください
 - コメントは適切に追加してください
 - エラーハンドリングを忘れないでください
+{"- 分析だけで終わらせず、実際にコードを変更してください" if implementation_needed else ""}
 
-それでは、issue #{issue_data['number']} の修正を開始してください。"""
+それでは、issue #{issue_data['number']} の修正を開始してください。{"**必ずファイルを編集してください。**" if implementation_needed else ""}"""
         
         try:
             session = await self.client.create_session(session_config)
@@ -316,6 +322,115 @@ INSUFFICIENT_INFO
         except Exception as e:
             logger.error(f"Error during implementation: {e}")
             result["message"] = f"実装中にエラーが発生しました: {str(e)}"
+            result["success"] = False
+        
+        return result
+    
+    def _check_if_implementation_needed(self, issue_data: Dict[str, Any]) -> bool:
+        """
+        Check if the issue likely requires code implementation based on keywords
+        Returns False if information is insufficient
+        """
+        body = (issue_data.get('body') or '').lower()
+        title = (issue_data.get('title') or '').lower()
+        combined = body + ' ' + title
+        
+        # Check for insufficient information indicators
+        insufficient_indicators = [
+            'エラーが発生する' in combined and 'エラー内容' not in combined and 'error' not in combined,
+            '動かない' in combined and len(body) < 50,  # Too short description
+            'bug' in combined and len(body) < 30,
+            combined.strip() == '' or len(combined.strip()) < 20  # Extremely short
+        ]
+        
+        # If any insufficient indicator is true, return False
+        if any(insufficient_indicators):
+            logger.info("Issue appears to have insufficient information for implementation")
+            return False
+        
+        # Keywords that suggest implementation is needed
+        implementation_keywords = [
+            '実装', '追加', '機能', 'feature', 'add', 'implement', 'create',
+            '修正', 'fix', 'bug', 'エラー', 'error', '動かない', 'not working',
+            '変更', 'change', 'modify', '改善', 'improve', 'enhance',
+            '対応', '処理', 'handle', 'として扱', 'として処理'
+        ]
+        
+        return any(keyword in combined for keyword in implementation_keywords)
+    
+    async def implement_fix_with_retry(self, issue_data: Dict[str, Any], repo_path: str, 
+                                       additional_context: str = "") -> Dict[str, Any]:
+        """
+        Retry implementation with more explicit instructions
+        """
+        if not self.client:
+            raise RuntimeError("Copilot client not started")
+        
+        session_config = {
+            "model": "claude-sonnet-4.5",
+            "cwd": repo_path
+        }
+        
+        repo_instructions = self._load_repo_instructions(repo_path)
+        instructions_to_use = repo_instructions or self.custom_instructions
+        
+        if instructions_to_use:
+            session_config["system_message"] = {
+                "content": instructions_to_use
+            }
+        
+        result = {
+            "success": False,
+            "message": "",
+            "files_modified": []
+        }
+        
+        prompt = f"""**重要: 前回の試行で失敗しました。今回は必ずファイルを変更してください。**
+
+{additional_context}
+
+# Issue情報
+- リポジトリ: {issue_data['repo']}
+- Issue番号: #{issue_data['number']}
+- タイトル: {issue_data['title']}
+- 内容:
+{issue_data['body']}
+
+# 作業ディレクトリ
+現在のディレクトリ: {repo_path}
+
+# 必須の手順
+1. まず関連ファイルを特定
+2. **issue内容が十分に具体的で実装可能な場合のみ、edit または create コマンドでファイルを変更**
+3. 変更後に git diff で確認
+4. 変更内容を報告
+
+# 重要な条件
+- **情報が不足している場合（エラー内容、再現手順、環境情報などが不明な場合）は編集を行わないでください**
+- issueに具体的な実装内容が含まれている場合のみファイルを編集してください
+- 不明確な要求に対して推測で実装することは避けてください"""
+        
+        try:
+            session = await self.client.create_session(session_config)
+            response = await session.send_and_wait({"prompt": prompt}, timeout=600)
+            await session.destroy()
+            
+            if response and hasattr(response.data, 'content'):
+                result["message"] = response.data.content
+                result["success"] = True
+                logger.info(f"Retry implementation completed: {len(result['message'])} characters")
+            else:
+                logger.warning("No implementation content received on retry")
+                result["message"] = "リトライ実装でもメッセージを取得できませんでした。"
+                result["success"] = False
+                
+        except asyncio.TimeoutError:
+            logger.error("Retry implementation timed out")
+            result["message"] = "リトライ実装がタイムアウトしました。"
+            result["success"] = False
+        except Exception as e:
+            logger.error(f"Error during retry implementation: {e}")
+            result["message"] = f"リトライ実装中にエラーが発生しました: {str(e)}"
             result["success"] = False
         
         return result
