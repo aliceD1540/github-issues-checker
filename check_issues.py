@@ -75,6 +75,7 @@ async def process_issue(issue: Issue, github_handler: GitHubHandler, git_handler
             
             if not analysis_result["completed"]:
                 logger.error(f"Failed to analyze issue #{issue.number}")
+                github_handler.add_label(issue, Config.BOT_PROCESSED_LABEL)
                 return False
             
             analysis_text = analysis_result["analysis"]
@@ -96,6 +97,7 @@ async def process_issue(issue: Issue, github_handler: GitHubHandler, git_handler
             logger.info(f"Adding analysis comment to issue #{issue.number}...")
             if not github_handler.add_comment(issue, comment_body):
                 logger.error(f"Failed to add comment to issue #{issue.number}")
+                github_handler.add_label(issue, Config.BOT_PROCESSED_LABEL)
                 return False
         
         # Step 3: Add labels
@@ -111,6 +113,7 @@ async def process_issue(issue: Issue, github_handler: GitHubHandler, git_handler
         
         if not repo_path:
             logger.error(f"Failed to clone repository {repo_name}")
+            github_handler.add_label(issue, Config.BOT_PROCESSED_LABEL)
             return False
         
         try:
@@ -120,6 +123,7 @@ async def process_issue(issue: Issue, github_handler: GitHubHandler, git_handler
             
             if not git_handler.checkout_branch(repo_path, branch_name, create=True):
                 logger.error(f"Failed to create branch {branch_name}")
+                github_handler.add_label(issue, Config.BOT_PROCESSED_LABEL)
                 return False
             
             # Also create remote branch
@@ -133,6 +137,7 @@ async def process_issue(issue: Issue, github_handler: GitHubHandler, git_handler
             
             if not implementation_result["success"]:
                 logger.error(f"Failed to implement fix for issue #{issue.number}")
+                github_handler.add_label(issue, Config.BOT_PROCESSED_LABEL)
                 return False
             
             logger.info(f"Implementation completed: {implementation_result['message'][:200]}...")
@@ -177,6 +182,7 @@ Closes #{issue.number}
             logger.info(f"Pushing branch {branch_name}...")
             if not git_handler.push_branch(repo_path, branch_name):
                 logger.error(f"Failed to push branch {branch_name}")
+                github_handler.add_label(issue, Config.BOT_PROCESSED_LABEL)
                 return False
             
             # Step 9: Create PR
@@ -221,6 +227,7 @@ Closes #{issue.number}
                 return True
             else:
                 logger.error(f"Failed to create PR for issue #{issue.number}")
+                github_handler.add_label(issue, Config.BOT_PROCESSED_LABEL)
                 return False
         
         finally:
@@ -230,6 +237,11 @@ Closes #{issue.number}
     
     except Exception as e:
         logger.error(f"Error processing issue #{issue.number}: {e}", exc_info=True)
+        # Mark as processed even on error to avoid infinite retry loops
+        try:
+            github_handler.add_label(issue, Config.BOT_PROCESSED_LABEL)
+        except Exception as label_error:
+            logger.error(f"Failed to add bot-processed label after error: {label_error}")
         return False
 
 async def process_repository(repo_name: str, github_handler: GitHubHandler, git_handler: GitHandler,
