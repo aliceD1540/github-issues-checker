@@ -11,36 +11,6 @@ class CopilotHandler:
         self.client = None
         self.instructions_file = instructions_file or "copilot-instructions.md"
         self.custom_instructions = self._load_instructions()
-        self.copilot_cli_path = self._find_copilot_cli_path()
-    
-    def _find_copilot_cli_path(self) -> Optional[str]:
-        """Find the full path to copilot CLI command"""
-        import shutil
-        
-        # Try to find copilot in PATH
-        copilot_path = shutil.which('copilot')
-        if copilot_path:
-            logger.info(f"Found copilot CLI at: {copilot_path}")
-            return copilot_path
-        
-        # Common installation paths to check
-        common_paths = [
-            os.path.expanduser("~/.nvm/versions/node/*/bin/copilot"),
-            "/usr/local/bin/copilot",
-            "/usr/bin/copilot",
-        ]
-        
-        import glob
-        for pattern in common_paths:
-            matches = glob.glob(pattern)
-            if matches:
-                # Sort to get the latest version if multiple exist
-                matches.sort(reverse=True)
-                logger.info(f"Found copilot CLI at: {matches[0]}")
-                return matches[0]
-        
-        logger.warning("Could not find copilot CLI path. Using default 'copilot' command.")
-        return None
     
     def _load_instructions(self) -> Optional[str]:
         if not os.path.exists(self.instructions_file):
@@ -74,12 +44,7 @@ class CopilotHandler:
             return None
     
     async def start(self):
-        # Configure CopilotClient with explicit CLI path if found
-        client_options = {}
-        if self.copilot_cli_path:
-            client_options["cli_path"] = self.copilot_cli_path
-        
-        self.client = CopilotClient(client_options if client_options else None)
+        self.client = CopilotClient()
         await self.client.start()
         logger.info("Copilot client started")
     
